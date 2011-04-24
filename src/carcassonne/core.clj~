@@ -1,0 +1,63 @@
+(ns carcassonne.core
+  (:import [javax.swing JFrame JPanel JLabel
+            ImageIcon JList ListModel ListCellRenderer
+            SwingUtilities JButton
+            JScrollPane UIManager]
+           [javax.imageio ImageIO]
+           [java.io File]))
+
+(def cards
+  '((1 c c c c)
+    (1 r r r r)
+    (4 r r r f)
+    (3 r r r c)
+    (4 f f f c)
+    (3 c r r f)
+    (3 c f r r)
+    (3 c f c f c)
+    (3 c f c f f)
+    (5 c c r r)
+    (2 c c f f f)
+    (5 c c f f c)
+    (4 c c c f)
+    (3 c c c r)
+    (3 f f f f m)
+    (2 f f f r m)
+    (8 f r f r)
+    (3 f r c r)
+    (9 f f r r)))
+
+
+
+(defn open-or-create [file]
+  (if (string? file)
+    (File. file)
+    file))
+
+(defn open-image [path]
+  (JLabel.
+   (ImageIcon.
+    (.getScaledInstance
+     (ImageIO/read (open-or-create path))200 200 0))))
+
+(defn open-images [directory]
+  (let [files (.listFiles (File. directory))
+        images (map open-image files)]
+    (JScrollPane.
+     (doto (JList. (to-array images))
+       (.setCellRenderer
+        (proxy [ListCellRenderer] []
+          (getListCellRendererComponent [list value index isSelected cellHasFocus]
+            value)))))))
+
+(defn open-window []
+  (doto (JFrame. "Carcassonne")
+    (.setSize 230 400)
+    (.add (open-images "/home/nathan/Projects/carcassonne/pictures/finished"))
+    (.setVisible true)))
+
+(defn -main []
+  (SwingUtilities/invokeLater
+   (fn []
+     (UIManager/setLookAndFeel "org.pushingpixels.substance.api.skin.SubstanceCremeLookAndFeel")
+     (open-window))))

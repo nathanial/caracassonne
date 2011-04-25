@@ -4,8 +4,9 @@
             ImageIcon JList ListModel ListCellRenderer
             SwingUtilities JButton JDesktopPane JInternalFrame
             JScrollPane UIManager]
-           [java.awt.event MouseAdapter MouseMotionListener]
-           [java.awt Color]
+           [javax.swing.plaf InternalFrameUI]
+           [java.awt.event MouseAdapter MouseMotionListener MouseMotionAdapter]
+           [java.awt Color Dimension]
            [javax.imageio ImageIO]
            [java.io File]
            [net.miginfocom.swing MigLayout]))
@@ -36,26 +37,26 @@
     (File. file)
     file))
 
-(def open-frame (agent nil))
 (def game-board (agent nil))
+
+(defn borderless-internal-frame []
+  (let [f (JInternalFrame. )
+        ui (.getUI f)]
+    (doto f
+      (.setBorder nil))
+    (doto ui
+      (.. (getNorthPane) (setPreferredSize (Dimension. 0 0))))
+    f))
 
 (defn open-image-frame [pos icon]
   (let [frame 
-        (doto (JInternalFrame.)
+        (doto (borderless-internal-frame)
           (.setSize 200 200)
           (.setLocation 0 0)
           (.add (JLabel. icon))
           (.setVisible true)
-          (.moveToFront)])
-    (send open-frame (fn [x] frame))
-    (println "creating " frame)
+          (.moveToFront))]
     (.add @game-board frame)))
-
-(defn close-open-frame []
-  (let [f @open-frame]
-    (when f
-      (.setVisible f false)
-      (send open-frame (fn [x] nil)))))
 
 (defn open-image [path]
   (let [icon (ImageIcon.
@@ -83,7 +84,31 @@
                   index (.locationToIndex list p)
                   model (.getModel list)
                   image (.getElementAt model index)]
-              (open-image-frame p (.getIcon image))))))))))
+              (let [f (open-image-frame p (.getIcon image))]
+                (doto f
+                  (.addMouseListener 
+                   (proxy [MouseAdapter] []
+                     (mousePressed [e]
+                       (let [dm (.. f (getDesktopPane) (getDesktopManager))]
+                         (.beginDraggingFrame dm f)
+                         (println "began dragging")))
+                     (mouseReleased [e]
+                       (let [dm (.. f (getDesktopPane) (getDesktopManager))]
+                         (.endDraggingFrame dm f)
+                         (println "ended dragging")))))
+
+                  (.addMouseMotionListener
+                   (proxy [MouseMotionAdapter] []
+                     (mouseDragged [e]
+                       (let [dm (.. f (getDesktopPane) (getDesktopManager))
+                             pos  (.getLocation f)
+                             p (SwingUtilities/convertPoint (.getSource e) (.getX e) (.getY e) (.getDesktopPane f))
+                             dx (- (. pos x) (.getX e))
+                             dy (- (. pos y) (.getY e))]
+                         (when (> 50 (rem (.getX p) 200))
+                           (.dragFrame dm f (- (.getX p) 100) (- (.getY p) 100)))
+))))))
+              ))))))))
 
 (defn game-board-panel []
   (let [gb (JDesktopPane.)]
@@ -96,14 +121,6 @@
 (defn open-window []
   (doto (JFrame. "Carcassonne")
     (.setSize 1000 750)
-    (.addMouseMotionListener
-     (proxy [MouseMotionListener] []
-       (mouseDragged [e]
-         (let [f @open-frame]
-           (when f
-             (.setLocation f (.getPos e)))))
-       (mouseMoved [e]
-         nil)))
     (.add
      (doto (JPanel.)
        (.setLayout (MigLayout. ))

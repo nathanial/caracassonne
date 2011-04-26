@@ -12,7 +12,7 @@
            [net.miginfocom.swing MigLayout]))
 
 (def cards
-  '((1 c c c c)
+  '((1 c c c c )
     (1 r r r r)
     (4 r r r f)
     (3 r r r c)
@@ -32,6 +32,31 @@
     (3 f r c r)
     (9 f f r r)))
 
+(defmacro single-method
+  "Returns a proxied or reified instance of c, which must be a class
+  or interface with exactly one method. Forwards method calls to the
+  function f, which must accept the same number of arguments as the
+  method, not including the 'this' argument.
+
+  If c is a class, not an interface, then it must have a public,
+  no-argument constructor."
+  [c f]
+  {:pre [(symbol? c)]}
+  (let [klass (resolve c)]
+    (assert (instance? java.lang.Class klass))
+    (let [methods (.getDeclaredMethods klass)]
+      (assert (= 1 (count methods)))
+      (let [method (first methods)
+            method-name (symbol (.getName method))
+            arg-count (count (.getParameterTypes method))
+            args (repeatedly arg-count gensym)]
+        (if (.isInterface klass)
+          `(let [f# ~f]
+             (reify ~c (~method-name ~(vec (cons (gensym "this") args))
+                                     (f# ~@args))))
+          `(let [f# ~f]
+             (proxy [~c] [] (~method-name ~(vec args) (f# ~@args)))))))))
+
 (defn open-or-create [file]
   (if (string? file)
     (File. file)
@@ -48,72 +73,65 @@
       (.. (getNorthPane) (setPreferredSize (Dimension. 0 0))))
     f))
 
-(defn open-image-frame [pos icon]
-  (let [frame 
-        (doto (borderless-internal-frame)
-          (.setSize 200 200)
-          (.setLocation 0 0)
-          (.add (JLabel. icon))
-          (.setVisible true)
-          (.moveToFront))]
-    (.add @game-board frame)))
+(defn open-image-frame [icon]
+  (.add @game-board
+        (let [f (borderless-internal-frame)]
+          (doto f
+            (.setSize 200 200)
+            (.setLocation 0 0)
+            (.add (JLabel. icon))
+            (.setVisible true)
+            (.moveToFront)
+            (.addMouseListener 
+             (proxy [MouseAdapter] []
+               (mousePressed [e]
+                 (-> f (.getDesktopPane) (.getDesktopManager) (.beginDraggingFrame f)))
+               (mouseReleased [e]
+                 (-> f (.getDesktopPane) (.getDesktopManager) (.endDraggingFrame f)))))))))
+
 
 (defn open-image [path]
-  (let [icon (ImageIcon.
-              (.getScaledInstance
-               (ImageIO/read (open-or-create path)) 200 200 0))]
-    (JLabel. icon)))
+  (->
+   (open-or-create path)
+   (ImageIO/read)
+   (.getScaledInstance 200 200 0)
+   (ImageIcon.)
+   (JLabel.)))
 
 (def open-image (memoize open-image))
+
+(defn image-from-list [list point]
+  (-> list
+      (.getModel)
+      (.getElementAt (.locationToIndex list point))
+      (.getIcon)))
 
 (defn images-list [directory]
   (let [files (.listFiles (File. directory))
         images (map open-image files)]
     (JScrollPane.
      (doto (JList. (to-array images))
-       (.setCellRenderer
-        (proxy [ListCellRenderer] []
-          (getListCellRendererComponent [list value index isSelected cellHasFocus]
-            value)))
+       (.setCellRenderer (single-method ListCellRenderer (fn [_ value _ _ _] value)))
        (.addMouseListener
         (proxy [MouseAdapter] []
           (mousePressed [e]
-            (println "pressed")
-            (let [list (.getSource e)
-                  p (.getPoint e)
-                  index (.locationToIndex list p)
-                  model (.getModel list)
-                  image (.getElementAt model index)]
-              (let [f (open-image-frame p (.getIcon image))]
-                (doto f
-                  (.addMouseListener 
-                   (proxy [MouseAdapter] []
-                     (mousePressed [e]
-                       (let [dm (.. f (getDesktopPane) (getDesktopManager))]
-                         (.beginDraggingFrame dm f)
-                         (println "began dragging")))
-                     (mouseReleased [e]
-                       (let [dm (.. f (getDesktopPane) (getDesktopManager))]
-                         (.endDraggingFrame dm f)
-                         (println "ended dragging")))))
-
-                  (.addMouseMotionListener
-                   (proxy [MouseMotionAdapter] []
-                     (mouseDragged [e]
-                       (let [dm (.. f (getDesktopPane) (getDesktopManager))
-                             pos  (.getLocation f)
-                             p (SwingUtilities/convertPoint (.getSource e) (.getX e) (.getY e) (.getDesktopPane f))
-                             dx (- (. pos x) (.getX e))
-                             dy (- (. pos y) (.getY e))]
-                         (when (> 50 (rem (.getX p) 200))
-                           (.dragFrame dm f (- (.getX p) 100) (- (.getY p) 100)))
-))))))
-              ))))))))
+            (let [f (open-image-frame (image-from-list (.getSource e) (.getPoint e)))]
+              (doto f
+                (.addMouseMotionListener
+                 (proxy [MouseMotionAdapter] []
+                   (mouseDragged [e]
+                     (let [pos  (.getLocation f)
+                           p (SwingUtilities/convertPoint (.getSource e) (.getX e) (.getY e) (.getDesktopPane f))]
+                       (when (or (> 200 (rem (.getX p) 200))
+                                 (> 200 (rem (.getY p) 200)))
+                         (let [y (- (.getY p) (rem (.getY p) 200))
+                               x (- (.getX p) (rem (.getX p) 200))]
+                           (-> f (.getDesktopPane) (.getDesktopManager) (.dragFrame f x y))))))))
+                ))
+            )))))))
 
 (defn game-board-panel []
-  (let [gb (JDesktopPane.)]
-    (doto gb
-      (.setBackground Color/white))
+  (let [gb (doto (JDesktopPane.) (.setBackground Color/white))]
     (send game-board (fn [x] gb))
     gb))
 
